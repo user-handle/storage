@@ -1,2 +1,1 @@
-# private-storage
-Private storage
+Storage
