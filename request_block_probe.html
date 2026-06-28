@@ -1,0 +1,302 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Request Block Probe</title>
+<style>
+  :root{
+    --bg:#0e1620; --panel:#15212e; --panel-alt:#1b2a3a; --line:#274056;
+    --ink:#dCE7F1; --ink-dim:#7e93a6; --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --through:#39d98a;   /* request left / readable */
+    --cors:#f6a83c;      /* reached server, response withheld */
+    --csp:#ff5f73;       /* never left: blocked at request layer */
+    --dead:#647a8f; /* no connection */
+    --accent:#46c8e6;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    line-height:1.5;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:860px;margin:0 auto;padding:32px 20px 80px}
+  header h1{
+    font-size:26px;margin:0 0 4px;letter-spacing:-.01em;
+    display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;
+  }
+  header h1 .tag{
+    font:600 11px/1 var(--mono);color:var(--accent);
+    border:1px solid var(--accent);border-radius:4px;padding:4px 6px;letter-spacing:.08em;
+  }
+  header p{color:var(--ink-dim);margin:.3em 0 0;max-width:60ch}
+
+  .env{
+    margin:22px 0;border:1px solid var(--line);border-radius:8px;background:var(--panel);
+    font:12px/1.6 var(--mono);
+  }
+  .env summary{cursor:pointer;padding:10px 14px;color:var(--ink-dim);user-select:none}
+  .env .envbody{padding:0 14px 12px;display:grid;grid-template-columns:auto 1fr;gap:2px 16px}
+  .env .k{color:var(--ink-dim)}
+  .env .v{color:var(--ink)}
+  .env .v.warn{color:var(--cors)} .env .v.ok{color:var(--through)} .env .v.bad{color:var(--csp)}
+
+  .controls{display:flex;gap:8px;margin:18px 0 10px;flex-wrap:wrap}
+  input[type=text]{
+    flex:1 1 320px;min-width:0;background:var(--panel-alt);border:1px solid var(--line);
+    color:var(--ink);border-radius:8px;padding:11px 13px;font:14px/1 var(--mono);
+  }
+  input[type=text]:focus{outline:2px solid var(--accent);outline-offset:0;border-color:transparent}
+  button{
+    background:var(--accent);color:#04222c;border:0;border-radius:8px;
+    padding:0 18px;font:600 14px/1 system-ui;cursor:pointer;
+  }
+  button:hover{filter:brightness(1.08)} button:disabled{opacity:.5;cursor:default}
+  .presets{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+  .presets button{
+    background:transparent;border:1px solid var(--line);color:var(--ink-dim);
+    font:12px/1 var(--mono);padding:7px 9px;border-radius:6px;
+  }
+  .presets button:hover{border-color:var(--accent);color:var(--accent)}
+
+  .result{
+    border:1px solid var(--line);border-left-width:4px;border-radius:8px;
+    background:var(--panel);margin:12px 0;overflow:hidden;
+  }
+  .result.through{border-left-color:var(--through)}
+  .result.cors{border-left-color:var(--cors)}
+  .result.csp{border-left-color:var(--csp)}
+  .result.dead{border-left-color:var(--dead)}
+  .result.pending{border-left-color:var(--accent)}
+  .rhead{padding:13px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .rhead .url{font:12px/1.4 var(--mono);color:var(--ink-dim);word-break:break-all;flex:1 1 200px}
+  .verdict{font:700 13px/1 system-ui;letter-spacing:.02em;padding:5px 9px;border-radius:5px}
+  .verdict.through{background:rgba(57,217,138,.14);color:var(--through)}
+  .verdict.cors{background:rgba(246,168,60,.14);color:var(--cors)}
+  .verdict.csp{background:rgba(255,95,115,.14);color:var(--csp)}
+  .verdict.dead{background:rgba(100,122,143,.18);color:#a9bccd}
+  .verdict.pending{background:rgba(70,200,230,.14);color:var(--accent)}
+
+  .axes{display:flex;gap:10px;padding:0 16px 12px;flex-wrap:wrap}
+  .axis{
+    flex:1 1 200px;background:var(--panel-alt);border:1px solid var(--line);
+    border-radius:7px;padding:10px 12px;
+  }
+  .axis .lbl{font:11px/1.3 var(--mono);color:var(--ink-dim);letter-spacing:.04em}
+  .axis .state{font:600 14px/1.3 system-ui;margin-top:3px;display:flex;align-items:center;gap:7px}
+  .dot{width:9px;height:9px;border-radius:50%;flex:none;display:inline-block}
+  .dot.y{background:var(--through)} .dot.n{background:var(--csp)} .dot.p{background:var(--cors)} .dot.u{background:var(--dead)}
+
+  .explain{padding:0 16px 14px;color:var(--ink);font-size:13.5px;max-width:70ch}
+  .explain b{color:#fff}
+  details.raw{margin:0 16px 14px;border-top:1px solid var(--line);padding-top:10px}
+  details.raw summary{cursor:pointer;color:var(--ink-dim);font:12px/1 var(--mono)}
+  details.raw pre{
+    background:var(--bg);border:1px solid var(--line);border-radius:6px;
+    padding:10px;overflow:auto;font:11.5px/1.5 var(--mono);color:var(--ink);margin:8px 0 0;
+  }
+  .legend{margin-top:26px;font-size:12.5px;color:var(--ink-dim);border-top:1px solid var(--line);padding-top:14px}
+  .legend code{font:12px var(--mono);color:var(--accent)}
+  a{color:var(--accent)}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Request Block Probe <span class="tag">CSP · CORS · NET</span></h1>
+    <p>Sends each URL three ways and watches for CSP violation events, so it can tell
+       <b>"the request never left"</b> apart from <b>"it reached the server but the
+       response was withheld from your code."</b> Open the browser's Network tab alongside
+       this for the ground truth.</p>
+  </header>
+
+  <details class="env" open>
+    <summary>environment</summary>
+    <div class="envbody" id="envbody"></div>
+  </details>
+
+  <div class="presets" id="presets"></div>
+  <div class="controls">
+    <input id="url" type="text" placeholder="https://example.com/path" autocomplete="off" spellcheck="false">
+    <button id="run">Run test</button>
+  </div>
+
+  <div id="results"></div>
+
+  <div class="legend">
+    <p><b style="color:var(--through)">THROUGH &amp; READABLE</b> — request sent, response handed to your code (same-origin or CORS-permitted).<br>
+       <b style="color:var(--cors)">CORS-BLOCKED</b> — request reached the server and it responded, but the browser refused to give the body to your code. <b>The request did go through.</b><br>
+       <b style="color:var(--csp)">CSP-BLOCKED</b> — a <code>connect-src</code>/<code>default-src</code> rule stopped the browser before it opened the connection. <b>Nothing left the machine.</b><br>
+       <b style="color:#a9bccd">NO CONNECTION</b> — both probes failed with no CSP event: DNS failure, refused, offline, or a block that emits no signal. Confirm with the Network tab.</p>
+    <p style="margin-top:10px">To be <b>100% certain</b> a request truly arrived somewhere, point a test at a URL you control
+       (e.g. a free <a href="https://webhook.site" target="_blank" rel="noopener">webhook.site</a> address) and check whether the hit appears in its log.</p>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var PRESETS = [
+    {label:"CORS-allowed (httpbin)", url:"https://httpbin.org/get"},
+    {label:"reachable, no CORS hdr (example.com)", url:"https://example.com/"},
+    {label:"unreachable host", url:"https://nope-" + Math.random().toString(36).slice(2) + ".invalid/"},
+    {label:"this page's origin", url:location.origin === "null" ? location.href : location.origin + "/"}
+  ];
+
+  // ---- environment readout -------------------------------------------------
+  function metaCSP(){
+    var tags = document.querySelectorAll('meta[http-equiv="Content-Security-Policy" i]');
+    if(!tags.length) return null;
+    return Array.prototype.map.call(tags, function(t){return t.content;}).join("  ||  ");
+  }
+  var env = document.getElementById('envbody');
+  function row(k,v,cls){
+    var a=document.createElement('div');a.className='k';a.textContent=k;
+    var b=document.createElement('div');b.className='v'+(cls?(' '+cls):'');b.textContent=v;
+    env.appendChild(a);env.appendChild(b);
+  }
+  row('origin', location.origin === "null" ? "null (opened as a local file)" : location.origin);
+  row('fetch available', (typeof fetch==='function')?'yes':'NO — no Fetch API here', (typeof fetch==='function')?'ok':'bad');
+  row('XMLHttpRequest', (typeof XMLHttpRequest==='function')?'yes':'no', (typeof XMLHttpRequest==='function')?'':'warn');
+  row('securitypolicyviolation', ('SecurityPolicyViolationEvent' in window)?'supported (CSP detectable)':'not supported', ('SecurityPolicyViolationEvent' in window)?'ok':'warn');
+  var mcsp = metaCSP();
+  row('CSP via <meta>', mcsp ? mcsp : 'none found in this document', mcsp?'warn':'');
+  if(typeof fetch!=='function'){
+    row('note','This sandbox exposes no fetch, so no request can be formed — nothing reaches the network layer to be evaluated by CSP or CORS at all.','bad');
+  }
+
+  // ---- presets -------------------------------------------------------------
+  var pbox=document.getElementById('presets');
+  PRESETS.forEach(function(p){
+    var b=document.createElement('button');b.textContent=p.label;
+    b.onclick=function(){document.getElementById('url').value=p.url;run(p.url);};
+    pbox.appendChild(b);
+  });
+
+  // ---- probe core ----------------------------------------------------------
+  function withTimeout(promise, ms){
+    return new Promise(function(resolve){
+      var done=false;
+      var t=setTimeout(function(){ if(!done){done=true;resolve({timeout:true});} }, ms);
+      promise.then(function(v){ if(!done){done=true;clearTimeout(t);resolve(v);} },
+                   function(e){ if(!done){done=true;clearTimeout(t);resolve({error:e});} });
+    });
+  }
+
+  function probeFetch(url, mode){
+    if(typeof fetch!=='function') return Promise.resolve({unsupported:true});
+    var p = fetch(url, {mode:mode, redirect:'follow', cache:'no-store'})
+      .then(function(r){ return {resolved:true, status:r.status, type:r.type}; },
+            function(e){ return {error:true, message:String(e && e.message || e)}; });
+    return withTimeout(p, 9000);
+  }
+
+  function sameURL(a, b){
+    // loose match: CSP blockedURI may be the origin or a truncated form
+    if(!a) return false;
+    try{
+      var ua=new URL(a, location.href), ub=new URL(b, location.href);
+      return ua.origin===ub.origin || a===b || b.indexOf(a)===0 || a.indexOf(ub.origin)===0;
+    }catch(e){ return a===b; }
+  }
+
+  function decide(cors, noCors, cspHit){
+    if(cspHit) return 'csp';
+    if(cors && cors.resolved) return 'through';
+    if(noCors && noCors.resolved) return 'cors';  // opaque response => reached server
+    return 'dead';
+  }
+
+  var META = {
+    through:{verdict:'THROUGH & READABLE',
+      left:['Yes','y'], read:['Yes — your code can read it','y'],
+      text:function(d){return 'The request was sent and the server\'s response was handed back to your JavaScript'+(d.cors.status?(' (HTTP '+d.cors.status+')'):'')+'. This is same-origin, or the server returned an <b>Access-Control-Allow-Origin</b> header that permits your origin.';}},
+    cors:{verdict:'CORS-BLOCKED',
+      left:['Yes — reached the server','y'], read:['No — body withheld from your code','p'],
+      text:function(d){return 'This is the case you were asking about. The cross-origin request <b>did leave the browser and the server responded</b> — the <code>no-cors</code> probe got an opaque reply back. But because the server\'s CORS headers don\'t allow your origin, the browser refused to expose the response to your code, so a normal fetch throws a generic <b>Failed to fetch</b>. Side effects on the server still happened.';}},
+    csp:{verdict:'CSP-BLOCKED',
+      left:['No — never opened a connection','n'], read:['No','n'],
+      text:function(d){return 'A Content-Security-Policy rule ('+(d.cspHit?('<code>'+d.cspHit.directive+'</code>'):'connect-src')+') stopped the browser <b>before any packet left the machine</b>. The server never saw this request. This fired a <code>securitypolicyviolation</code> DOM event, which is how the page detected it despite the fetch error looking identical to a CORS failure.';}},
+    dead:{verdict:'NO CONNECTION',
+      left:['No / unknown','u'], read:['No','u'],
+      text:function(d){return 'Both probes failed and no CSP violation event fired. Most likely the request never reached a server — DNS didn\'t resolve, the connection was refused, the host is offline, or it was a mixed-content block. Open the Network tab: <code>net::ERR_*</code> confirms a true connection failure.';}}
+  };
+
+  // ---- render --------------------------------------------------------------
+  var results=document.getElementById('results');
+  function el(tag,cls,txt){var e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e;}
+
+  function render(card, url, kind, data){
+    card.className='result '+kind;
+    var m=META[kind];
+    card.innerHTML='';
+    var head=el('div','rhead');
+    head.appendChild(el('span','url',url));
+    head.appendChild(el('span','verdict '+kind, m.verdict));
+    card.appendChild(head);
+
+    var axes=el('div','axes');
+    function axis(label, stateArr){
+      var a=el('div','axis');
+      a.appendChild(el('div','lbl',label));
+      var s=el('div','state');
+      var dot=el('span','dot '+stateArr[1]); s.appendChild(dot);
+      s.appendChild(document.createTextNode(stateArr[0]));
+      a.appendChild(s); return a;
+    }
+    axes.appendChild(axis('REQUEST LEFT THE BROWSER?', m.left));
+    axes.appendChild(axis('RESPONSE REACHED YOUR CODE?', m.read));
+    card.appendChild(axes);
+
+    var ex=el('div','explain'); ex.innerHTML=m.text(data); card.appendChild(ex);
+
+    var raw=el('details','raw');
+    raw.appendChild(el('summary','','raw probe data'));
+    var pre=el('pre','',
+      'cors fetch   : '+JSON.stringify(data.cors)+'\n'+
+      'no-cors fetch: '+JSON.stringify(data.noCors)+'\n'+
+      'csp events   : '+JSON.stringify(data.violations, null, 0));
+    raw.appendChild(pre); card.appendChild(raw);
+  }
+
+  function run(url){
+    url=(url||document.getElementById('url').value||'').trim();
+    if(!url) return;
+    var btn=document.getElementById('run'); btn.disabled=true;
+
+    var card=el('div','result pending');
+    card.innerHTML='<div class="rhead"><span class="url">'+
+      url.replace(/[<&>]/g,function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;'}[c];})+
+      '</span><span class="verdict pending">testing…</span></div>';
+    results.insertBefore(card, results.firstChild);
+
+    var violations=[];
+    function onViol(e){
+      violations.push({blockedURI:e.blockedURI, directive:e.violatedDirective || e.effectiveDirective, policy:e.originalPolicy});
+    }
+    document.addEventListener('securitypolicyviolation', onViol);
+
+    Promise.resolve()
+      .then(function(){ return probeFetch(url,'cors'); })
+      .then(function(cors){
+        return probeFetch(url,'no-cors').then(function(noCors){ return {cors:cors, noCors:noCors}; });
+      })
+      .then(function(d){
+        return new Promise(function(res){ setTimeout(function(){res(d);}, 80); }); // let CSP events flush
+      })
+      .then(function(d){
+        document.removeEventListener('securitypolicyviolation', onViol);
+        var cspHit=null;
+        for(var i=0;i<violations.length;i++){
+          if(sameURL(violations[i].blockedURI, url) &&
+             /connect-src|default-src|^$/.test(violations[i].directive||'')){ cspHit=violations[i]; break; }
+        }
+        if(!cspHit && violations.length){ cspHit=violations[0]; } // any violation for this run
+        d.violations=violations; d.cspHit=cspHit;
+        var kind=decide(d.cors, d.noCors, cspHit);
+        render(card, url, kind, d);
+        btn.disabled=false;
+      });
+  }
+
+  document.getElementById('run').onclick=function(){run();};
+  document.getElementById('url').addEventListener('keydown',function(e){ if(e.key==='Enter') run(); });
+})();
+</script>
